@@ -35,6 +35,8 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.IOException;
 import java.io.Writer;
+import java.lang.invoke.VarHandle;
+import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.util.List;
 import java.util.Map;
@@ -51,7 +53,9 @@ public final class CsvCodec extends OpackCodec<String, Writer> {
         private boolean replaceNullWithEmptyString; // whether represent null value as empty string
         private boolean skipEmptyLines; // whether to skip empty lines
         private boolean useSpace;   // whether to use empty space between comma-separated elements
-        private boolean useCarriageReturnSeparator; // whehther to use \r as line feed
+        private boolean useCarriageReturnSeparator; // whether to use \r as line feed
+
+        private Class<?> referenceClass;       // reference class to identify field structure, and also header
 
         public Builder() {
             this.encodeStackInitialSize = 128;
@@ -61,43 +65,64 @@ public final class CsvCodec extends OpackCodec<String, Writer> {
             this.skipEmptyLines = false;
             this.useSpace = false;
             this.useCarriageReturnSeparator = false;    // Default linefeed is new line character
+            this.referenceClass = null;
         }
 
-        public void setEncodeStackInitialSize(int encodeStackInitialSize) {
+        public Builder setEncodeStackInitialSize(int encodeStackInitialSize) {
             this.encodeStackInitialSize = encodeStackInitialSize;
+            return this;
         }
 
-        public void setEncodeStringBufferSize(int encodeStringBufferSize) {
+        public Builder setEncodeStringBufferSize(int encodeStringBufferSize) {
             this.encodeStringBufferSize = encodeStringBufferSize;
+            return this;
         }
 
-        public void setDecodeStackInitialSize(int decodeStackInitialSize) {
+        public Builder setDecodeStackInitialSize(int decodeStackInitialSize) {
             this.decodeStackInitialSize = decodeStackInitialSize;
+            return this;
         }
 
-        public void setreplaceNullWithEmptyString(boolean replaceNullWithEmptyString) {     // alt + insert hotkey
+        public Builder setreplaceNullWithEmptyString(boolean replaceNullWithEmptyString) {     // alt + insert hotkey
             this.replaceNullWithEmptyString = replaceNullWithEmptyString;
+            return this;
         }
 
-        public void setSkipEmptyLines(boolean skipEmptyLines) {
+        public Builder setSkipEmptyLines(boolean skipEmptyLines) {
             this.skipEmptyLines = skipEmptyLines;
+            return this;
         }
 
-        public void setEnableConvertCharacterToString(boolean enableConvertCharacterToString) {
+        public Builder setEnableConvertCharacterToString(boolean enableConvertCharacterToString) {
             this.enableConvertCharacterToString = enableConvertCharacterToString;
+            return this;
         }
 
-        public void setAllowOpackValueToKeyValue(boolean allowOpackValueToKeyValue) {
+        public Builder setAllowOpackValueToKeyValue(boolean allowOpackValueToKeyValue) {
             this.allowOpackValueToKeyValue = allowOpackValueToKeyValue;
+            return this;
         }
 
-        public void setUseSpace(boolean useSpace) {
+        public Builder setUseSpace(boolean useSpace) {
             this.useSpace = useSpace;
+            return this;
         }
 
-        public void setUseCarriageReturnSeparator(boolean useCarriageReturnSeparator) {
+        public Builder setUseCarriageReturnSeparator(boolean useCarriageReturnSeparator) {
             this.useCarriageReturnSeparator = useCarriageReturnSeparator;
+            return this;
         }
+
+        public Builder setReplaceNullWithEmptyString(boolean replaceNullWithEmptyString) {
+            this.replaceNullWithEmptyString = replaceNullWithEmptyString;
+            return this;
+        }
+
+        public Builder setReferenceClass(Class<?> referenceClass) {
+            this.referenceClass = referenceClass;
+            return this;
+        }
+
 
         public CsvCodec create() {
             return new CsvCodec(this);
@@ -112,7 +137,7 @@ public final class CsvCodec extends OpackCodec<String, Writer> {
     private static final char[] CONST_TRUE_CHARACTER = new char[]{'t', 'r', 'u', 'e'};
     private static final char[] CONST_FALSE_CHARACTER = new char[]{'f', 'a', 'l', 's', 'e'};
 
-    private static final char[] CONST_SPACE_CHARACTER = new char[' '];
+    private static final char[] CONST_SPACE_CHARACTER = new char[]{' '};
     private static final char[] CONST_SEPARATOR_CHARACTER = new char[]{','};
     private static final char[] CONST_NEWLINE_CHARACTER = new char[]{'\n'};
     private static final char[] CONST_CARRIAGE_RETURN_CHARACTER = new char[]{'\r'};
@@ -151,6 +176,8 @@ public final class CsvCodec extends OpackCodec<String, Writer> {
     private final boolean useSpace;
     private final boolean useCarriageReturnSeparator;
 
+    private final Class<?> referenceClass;
+
     private CsvCodec(Builder builder) {
         super();
 
@@ -166,11 +193,14 @@ public final class CsvCodec extends OpackCodec<String, Writer> {
         this.enableConvertCharacterToString = builder.enableConvertCharacterToString;
         this.useSpace = builder.useSpace;
         this.useCarriageReturnSeparator = builder.useCarriageReturnSeparator;
+        this.referenceClass = builder.referenceClass;
     }
 
     private boolean encodeLiteral(final Writer writer, Object object) throws IOException {
         if (object == null) {
-            writer.write(CONST_NULL_CHARACTER);
+            if(!this.replaceNullWithEmptyString) {
+                writer.write(CONST_NULL_CHARACTER);
+            }
             return true;
         }
 
@@ -219,8 +249,6 @@ public final class CsvCodec extends OpackCodec<String, Writer> {
         } else {
             Class<?> numberType = objectType;
 
-            writer.write(CONST_STRING_OPEN_CHARACTER);
-
             // Asserts
             if (numberType == Double.class) {
                 Double doubleValue = (Double) object;
@@ -251,8 +279,6 @@ public final class CsvCodec extends OpackCodec<String, Writer> {
             } else {
                 writer.write(object.toString());
             }
-
-            writer.write(CONST_STRING_CLOSE_CHARACTER);
         }
 
         return true;
@@ -268,6 +294,10 @@ public final class CsvCodec extends OpackCodec<String, Writer> {
             for (int index = 0; index < array.length; index++) {
                 if (index != 0) {
                     writer.write(CONST_SEPARATOR_CHARACTER);
+
+                    if(this.useSpace) {
+                        writer.write(CONST_SPACE_CHARACTER);
+                    }
                 }
 
                 if (array[index]) {
@@ -284,6 +314,10 @@ public final class CsvCodec extends OpackCodec<String, Writer> {
             for (int index = 0; index < array.length; index++) {
                 if (index != 0) {
                     writer.write(CONST_SEPARATOR_CHARACTER);
+
+                    if(this.useSpace) {
+                        writer.write(CONST_SPACE_CHARACTER);
+                    }
                 }
 
                 writer.write(Byte.toString(array[index]));
@@ -296,6 +330,10 @@ public final class CsvCodec extends OpackCodec<String, Writer> {
             for (int index = 0; index < array.length; index++) {
                 if (index != 0) {
                     writer.write(CONST_SEPARATOR_CHARACTER);
+
+                    if(this.useSpace) {
+                        writer.write(CONST_SPACE_CHARACTER);
+                    }
                 }
 
                 if (enableConvertCharacterToString) {
@@ -314,6 +352,10 @@ public final class CsvCodec extends OpackCodec<String, Writer> {
             for (int index = 0; index < array.length; index++) {
                 if (index != 0) {
                     writer.write(CONST_SEPARATOR_CHARACTER);
+
+                    if(this.useSpace) {
+                        writer.write(CONST_SPACE_CHARACTER);
+                    }
                 }
 
                 writer.write(Short.toString(array[index]));
@@ -326,6 +368,10 @@ public final class CsvCodec extends OpackCodec<String, Writer> {
             for (int index = 0; index < array.length; index++) {
                 if (index != 0) {
                     writer.write(CONST_SEPARATOR_CHARACTER);
+
+                    if(this.useSpace) {
+                        writer.write(CONST_SPACE_CHARACTER);
+                    }
                 }
 
                 writer.write(Integer.toString(array[index]));
@@ -338,6 +384,10 @@ public final class CsvCodec extends OpackCodec<String, Writer> {
             for (int index = 0; index < array.length; index++) {
                 if (index != 0) {
                     writer.write(CONST_SEPARATOR_CHARACTER);
+
+                    if(this.useSpace) {
+                        writer.write(CONST_SPACE_CHARACTER);
+                    }
                 }
 
                 writer.write(Float.toString(array[index]));
@@ -350,6 +400,10 @@ public final class CsvCodec extends OpackCodec<String, Writer> {
             for (int index = 0; index < array.length; index++) {
                 if (index != 0) {
                     writer.write(CONST_SEPARATOR_CHARACTER);
+
+                    if(this.useSpace) {
+                        writer.write(CONST_SPACE_CHARACTER);
+                    }
                 }
 
                 writer.write(Long.toString(array[index]));
@@ -362,6 +416,10 @@ public final class CsvCodec extends OpackCodec<String, Writer> {
             for (int index = 0; index < array.length; index++) {
                 if (index != 0) {
                     writer.write(CONST_SEPARATOR_CHARACTER);
+
+                    if(this.useSpace) {
+                        writer.write(CONST_SPACE_CHARACTER);
+                    }
                 }
 
                 writer.write(Double.toString(array[index]));
@@ -374,6 +432,10 @@ public final class CsvCodec extends OpackCodec<String, Writer> {
             for (int index = 0; index < array.length; index++) {
                 if (index != 0) {
                     writer.write(CONST_SEPARATOR_CHARACTER);
+
+                    if(this.useSpace) {
+                        writer.write(CONST_SPACE_CHARACTER);
+                    }
                 }
 
                 if (array[index] == null) {
@@ -392,6 +454,10 @@ public final class CsvCodec extends OpackCodec<String, Writer> {
             for (int index = 0; index < array.length; index++) {
                 if (index != 0) {
                     writer.write(CONST_SEPARATOR_CHARACTER);
+
+                    if(this.useSpace) {
+                        writer.write(CONST_SPACE_CHARACTER);
+                    }
                 }
 
                 if (array[index] == null) {
@@ -417,6 +483,10 @@ public final class CsvCodec extends OpackCodec<String, Writer> {
             for (int index = 0; index < array.length; index++) {
                 if (index != 0) {
                     writer.write(CONST_SEPARATOR_CHARACTER);
+
+                    if(this.useSpace) {
+                        writer.write(CONST_SPACE_CHARACTER);
+                    }
                 }
 
                 if (array[index] == null) {
@@ -433,6 +503,10 @@ public final class CsvCodec extends OpackCodec<String, Writer> {
             for (int index = 0; index < array.length; index++) {
                 if (index != 0) {
                     writer.write(CONST_SEPARATOR_CHARACTER);
+
+                    if(this.useSpace) {
+                        writer.write(CONST_SPACE_CHARACTER);
+                    }
                 }
 
                 if (array[index] == null) {
@@ -453,6 +527,10 @@ public final class CsvCodec extends OpackCodec<String, Writer> {
             for (int index = 0; index < array.length; index++) {
                 if (index != 0) {
                     writer.write(CONST_SEPARATOR_CHARACTER);
+
+                    if(this.useSpace) {
+                        writer.write(CONST_SPACE_CHARACTER);
+                    }
                 }
 
                 if (array[index] == null) {
@@ -490,6 +568,26 @@ public final class CsvCodec extends OpackCodec<String, Writer> {
 
         FastStack<possibleTypes> typeStack = new FastStack<>();
 
+        // use this when referenceClass is given
+//        int referenceFields = 0;
+//        if(this.referenceClass != null) {
+//            Field[] fields = this.referenceClass.getFields();
+//
+//            for(int index = 0; index < fields.length; index++) {
+//                writer.write(fields[index].getName());
+//
+//                if (index != fields.length - 1) {
+//                    writer.write(CONST_SEPARATOR_CHARACTER);
+//
+//                    if( this.useSpace) {
+//                        writer.write(CONST_SPACE_CHARACTER);
+//                    }
+//                }
+//            }
+//
+//            referenceFields = fields.length;
+//        }
+
         while (!this.encodeStack.isEmpty()) {
 
             Object object = this.encodeStack.pop();
@@ -513,19 +611,13 @@ public final class CsvCodec extends OpackCodec<String, Writer> {
                     throw new IOException("Can't access opack object map.", exception);
                 }
 
-                if (this.useCarriageReturnSeparator) {
-                    this.encodeStack.push(CONST_CARRIAGE_RETURN_CHARACTER);
-                } else {
-                    this.encodeStack.push(CONST_NEWLINE_CHARACTER);
-                }
-
                 int index = 0;
                 Set<Map.Entry<Object, Object>> entrySet = opackObjectMap.entrySet();
                 int fieldCount = entrySet.size();
 
                 int reverserStart = this.encodeStack.getSize();
 
-                for (Map.Entry<Object, Object> entry : entrySet) {
+                for (Map.Entry<Object, Object> entry : entrySet) {      //why this is popping in reversed order?
                     Object key = entry.getKey();
                     Object value = entry.getValue();
 
@@ -537,27 +629,27 @@ public final class CsvCodec extends OpackCodec<String, Writer> {
                         throw new IllegalArgumentException("CSV cannot support nested structures.");
                     }
 
-                    this.encodeStack.push(key);
-
-                    this.encodeStack.push(CONST_SEPARATOR_CHARACTER);
-
-                    if (this.useSpace) {
-                        this.encodeStack.push(CONST_SPACE_CHARACTER);
-                    }
-
                     this.encodeStack.push(value);
 
+                    if(this.useSpace) {
+                        this.encodeStack.push(CONST_SPACE_CHARACTER);
+                    }
+                    this.encodeStack.push(CONST_SEPARATOR_CHARACTER);
+
+                    this.encodeStack.push(key);
+
                     // fields of opackObject is separated by linefeed
-                    if (this.useCarriageReturnSeparator) {
-                        this.encodeStack.push(CONST_CARRIAGE_RETURN_CHARACTER);
-                    } else {
-                        this.encodeStack.push(CONST_NEWLINE_CHARACTER);
+                    if( index != fieldCount - 1) {
+                        if (this.useCarriageReturnSeparator) {
+                            this.encodeStack.push(CONST_CARRIAGE_RETURN_CHARACTER);
+                        } else {
+                            this.encodeStack.push(CONST_NEWLINE_CHARACTER);
+                        }
                     }
 
                     index++;
                 }
 
-                this.encodeStack.reverse(reverserStart, this.encodeStack.getSize() - 1);
                 typeStack.push(possibleTypes.OPACKOBJECT);
 
             } else if (objectType == OpackArray.class) {
@@ -587,31 +679,29 @@ public final class CsvCodec extends OpackCodec<String, Writer> {
                     int index = 0;
 
                     for (Object arrayElement : opackArrayList) {
-                        if (!this.encodeLiteral(this.encodeLiteralStringWriter, arrayElement)) {   // meet non-native target (OPACKARRAY, OPACKOBJECT)
-                            if ( parentType == possibleTypes.OPACKARRAY || parentType == possibleTypes.OPACKOBJECT) {
+                        if (!this.encodeLiteral(this.encodeLiteralStringWriter, arrayElement)) {   // meet non-native target (OPACKARRAY, OPACKOBJECT) i.e. nested situation
+                            if ( parentType == possibleTypes.OPACKOBJECT || typeStack.getSize() >= 2) {
                                 throw new IllegalStateException("CSV cannot support nested structures.");
                             } else {
                                 if(this.encodeLiteralStringWriter.getLength() > 0) {  //migrate
                                     this.encodeStack.push(this.encodeLiteralStringWriter.toCharArray());
-                                    this.encodeStack.swap(this.encodeStack.getSize() - 1, this.encodeStack.getSize() - 2);
+
+                                    if( this.useCarriageReturnSeparator) {
+                                        this.encodeStack.push(CONST_CARRIAGE_RETURN_CHARACTER);
+                                    } else {
+                                        this.encodeStack.push(CONST_NEWLINE_CHARACTER);
+                                    }
                                 }
+                                this.encodeStack.push(arrayElement);
                             }
 
                             this.encodeLiteralStringWriter.reset();
 
                             if(index != size - 1) {
-                                this.encodeStack.push(CONST_SEPARATOR_CHARACTER);
-
-                                if (this.useSpace) {
-                                    this.encodeStack.push(CONST_SPACE_CHARACTER);
-                                }
-                            } else {
-                                if(parentType != null) {
-                                    if(this.useCarriageReturnSeparator) {
-                                        this.encodeStack.push(CONST_CARRIAGE_RETURN_CHARACTER);
-                                    } else {
-                                        this.encodeStack.push(CONST_NEWLINE_CHARACTER);
-                                    }
+                                if (this.useCarriageReturnSeparator) {
+                                    this.encodeStack.push(CONST_CARRIAGE_RETURN_CHARACTER);
+                                } else {
+                                    this.encodeStack.push(CONST_NEWLINE_CHARACTER);
                                 }
                             }
                         } else {    // literal contents are written in encodeLiteralStringWriter
@@ -621,14 +711,7 @@ public final class CsvCodec extends OpackCodec<String, Writer> {
                                 if (this.useSpace) {
                                     this.encodeLiteralStringWriter.write(CONST_SPACE_CHARACTER);
                                 }
-                            } else {
-                                if (this.useCarriageReturnSeparator) {
-                                    this.encodeLiteralStringWriter.write(CONST_CARRIAGE_RETURN_CHARACTER);
-                                } else {
-                                    this.encodeLiteralStringWriter.write(CONST_NEWLINE_CHARACTER);
-                                }
                             }
-
                         }
 
                         index++;
